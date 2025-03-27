@@ -28,7 +28,7 @@ AOD_max = st.sidebar.slider("Y-Axis Max", min_value=0.0, max_value=1.0, value=0.
 # Set file URLs based on the selected site
 site_urls = {
     "Turlock CA USA": "https://raw.githubusercontent.com/Rsaltos7/AOD-Site-Combine/refs/heads/main/20240101_20241231_Turlock_CA_USA.lev15",
-    "https://raw.githubusercontent.com/Rsaltos7/AOD-Site-Combine/refs/heads/main/20240101_20241231_Modesto.lev15",  # Replace with actual URL
+    " Moddesto CA USA " : "https://raw.githubusercontent.com/Rsaltos7/AOD-Site-Combine/refs/heads/main/20240101_20241231_Modesto.lev15",  # Replace with actual URL
     "Fresno CA USA": "https://raw.githubusercontent.com/Rsaltos7/AOD-Site-Combine/refs/heads/main/20240101_20241231_Fresno_2.lev15"  # Replace with actual URL
 }
 
