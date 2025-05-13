@@ -1,115 +1,72 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-import datetime
+import numpy as np
 
-# ------------------------------ CONFIG -------------------------------- #
-SampleRate = "1h"
-windSampleRate = '3h'
+# Function to load AOD data for all cities
+@st.cache_data
+def load_data(url):
+    return pd.read_csv(url)
 
-# URLs for each city's AOD data
-city_urls = {
-    "Turlock": "https://raw.githubusercontent.com/Rsaltos7/TurlockAOD2024/refs/heads/main/20240101_20241231_Turlock_CA_USA.lev15",
-    "Sacramento": "https://raw.githubusercontent.com/Rsaltos7/SacromentoAOD/refs/heads/main/20240101_20241231_Sacramento_River.lev15",
-    "Modesto": "https://raw.githubusercontent.com/Rsaltos7/ModestoAOD/refs/heads/main/20240101_20241231_Modesto.lev15",
-    "Fresno": "https://raw.githubusercontent.com/Rsaltos7/FresnoAOD/refs/heads/main/20240101_20241231_Fresno_2.lev15",
-}
-windfile = 'https://raw.githubusercontent.com/Rsaltos7/TurlockAOD2024/refs/heads/main/72492623258%20(4).csv'
+# Function to load Turlock wind/temperature data
+@st.cache_data
+def load_turlock_met_data():
+    url = "https://raw.githubusercontent.com/aadi350/AOD/main/turlock_wind_temp.csv"
+    df = pd.read_csv(url)
 
-# ------------------------------ FUNCTIONS ------------------------------ #
-def load_aod_data(file_url):
-    try:
-        df = pd.read_csv(file_url, skiprows=6, parse_dates={'datetime': [0, 1]})
-        datetime_utc = pd.to_datetime(df["datetime"], format='%d:%m:%Y %H:%M:%S')
-        datetime_pac = datetime_utc.dt.tz_localize('UTC').dt.tz_convert('US/Pacific')
-        df.set_index(datetime_pac, inplace=True)
-        return df
-    except Exception as e:
-        st.error(f"Error loading AOD data from {file_url}: {e}")
-        return None
+    # Split TMP and WND columns
+    df[['TMP_1', 'TMP_2']] = df['TMP'].str.split(',', expand=True)
+    df[['WND_1', 'WND_2']] = df['WND'].str.split(',', expand=True)
 
-def load_wind_temp_data(file_url):
-    df = pd.read_csv(file_url, parse_dates={'datetime': [1]}, low_memory=False)
-    datetime_utc = pd.to_datetime(df["datetime"], format='%d-%m-%Y %H:%M:%S')
-    datetime_pac = datetime_utc.dt.tz_localize('UTC').dt.tz_convert('US/Pacific')
-    df.set_index(datetime_pac, inplace=True)
-    return df
+    # Replace invalid values and convert to float
+    df['TMP_C'] = df['TMP_1'].replace('+9999', np.nan).astype(float) / 10  # Kelvin to °C
+    df['WindSpeed'] = df['WND_2'].replace('+9999', np.nan).astype(float) * 0.1
 
-def compute_wind_components(df):
-    wnd = df['WND'].str.split(',', expand=True)
-    wnd = wnd[wnd[4] == '5']  # Valid wind records
-    magnitude = wnd[3].astype(float)
-    direction = wnd[0].astype(float)
-    x = magnitude * np.sin(np.radians(direction))
-    y = magnitude * np.cos(np.radians(direction))
-    wnd[5], wnd[6] = x, y
-    return wnd
+    # Convert date
+    df['DATE'] = pd.to_datetime(df['DATE'])
 
-# ------------------------------ STREAMLIT UI ------------------------------ #
-st.title("AOD, Wind Vectors, and Temperature")
-StartDate = st.date_input("Start Date", datetime.date(2024, 5, 1))
-EndDate = st.date_input("End Date", datetime.date(2024, 5, 8))
-StartDateTime = datetime.datetime.combine(StartDate, datetime.time(0, 0))
-EndDateTime = datetime.datetime.combine(EndDate, datetime.time(23, 59))
+    return df[['DATE', 'TMP_C', 'WindSpeed']]
 
-AOD_min = st.sidebar.slider("Y-Axis Min", 0.0, 1.0, 0.0, 0.01)
-AOD_max = st.sidebar.slider("Y-Axis Max", 0.0, 1.0, 0.3, 0.01)
+# Load AOD data for different locations
+turlock_df = load_data("https://raw.githubusercontent.com/aadi350/AOD/main/Turlock.csv")
+modesto_df = load_data("https://raw.githubusercontent.com/aadi350/AOD/main/Modesto.csv")
+sacramento_df = load_data("https://raw.githubusercontent.com/aadi350/AOD/main/Sacramento.csv")
+fresno_df = load_data("https://raw.githubusercontent.com/aadi350/AOD/main/Fresno.csv")
 
-# ------------------------------ LOAD DATA ------------------------------ #
-wind_df = load_wind_temp_data(windfile)
-wind_components = compute_wind_components(wind_df)
-temp_df = wind_df['TMP'].str.split(',', expand=True).replace('+9999', np.nan).astype(float)
+# Load Turlock wind/temp data
+turlock_met_df = load_turlock_met_data()
 
-# ------------------------------ PLOT ------------------------------ #
-fig, ax = plt.subplots(figsize=(16, 9))
-fig.autofmt_xdate()
-ax.set_title('AOD (500nm), Wind Vectors & Temperature')
+# Convert date column to datetime in AOD data
+for df in [turlock_df, modesto_df, sacramento_df, fresno_df]:
+    df['Date'] = pd.to_datetime(df['Date'])
 
-# Time formatting
-ax.xaxis.set_major_locator(mdates.DayLocator(interval=1, tz='US/Pacific'))
-ax.xaxis.set_minor_locator(mdates.HourLocator(interval=3, tz='US/Pacific'))
-ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
+# Merge Turlock AOD and meteorology data on date
+merged_df = pd.merge(turlock_df, turlock_met_df, how='inner', left_on='Date', right_on='DATE')
 
-# Plot AOD for each city
-colors = {"Turlock": "black", "Sacramento": "blue", "Modesto": "green", "Fresno": "red"}
-handles = []
-for city, url in city_urls.items():
-    df = load_aod_data(url)
-    if df is not None and 'AOD_500nm' in df.columns:
-        series = df["AOD_500nm"].loc[StartDateTime:EndDateTime].resample(SampleRate).mean()
-        h, = ax.plot(series, marker='o', linestyle='-', label=f"{city} AOD_500nm", color=colors[city])
-        handles.append(h)
+# Streamlit app layout
+st.title("AOD & Meteorological Data Viewer")
+st.write("Showing AOD values from multiple locations and temperature/wind for Turlock.")
 
-ax.set_ylabel('AOD (500nm)')
-ax.set_ylim(AOD_min, AOD_max)
+# Plotting section
+fig, ax1 = plt.subplots(figsize=(10, 6))
 
-# Temperature Axis
-ax2 = ax.twinx()
-temp_series = temp_df[0].loc[StartDateTime:EndDateTime].resample(SampleRate).mean().div(10)
-ax2.plot(temp_series, '.r-', label='Temperature (°C)')
-ax2.set_ylabel("Temperature (°C)")
-ax2.set_ylim(temp_series.min() - 1, temp_series.max() + 3)
+# Plot AOD from multiple cities
+ax1.plot(turlock_df['Date'], turlock_df['AOD'], label='Turlock AOD', color='orange')
+ax1.plot(modesto_df['Date'], modesto_df['AOD'], label='Modesto AOD', linestyle='--', color='gray')
+ax1.plot(sacramento_df['Date'], sacramento_df['AOD'], label='Sacramento AOD', linestyle=':', color='green')
+ax1.plot(fresno_df['Date'], fresno_df['AOD'], label='Fresno AOD', linestyle='-.', color='red')
+ax1.set_ylabel("AOD")
+ax1.set_xlabel("Date")
+ax1.tick_params(axis='x', rotation=45)
+ax1.legend(loc='upper left')
 
-# Wind Vectors
-ax3 = ax.twinx()
-ax3.spines.right.set_position(("axes", 1.1))
-max_wind = np.sqrt((wind_components[5].astype(float).max() / 10)**2 + (wind_components[6].astype(float).max() / 10)**2)
-ax3.set_ylim(0, max_wind)
-ax3.set_ylabel("Wind Speed (m/s)")
+# Create a second y-axis for temperature and wind
+ax2 = ax1.twinx()
+ax2.plot(merged_df['Date'], merged_df['TMP_C'], label='Turlock Temp (°C)', color='blue')
+ax2.plot(merged_df['Date'], merged_df['WindSpeed'], label='Turlock Wind (m/s)', color='purple')
+ax2.set_ylabel("Temperature / Wind Speed")
+ax2.legend(loc='upper right')
 
-ax3.quiver(
-    wind_components[5].resample(windSampleRate).mean().index,
-    max_wind - 1,
-    -wind_components[5].resample(windSampleRate).mean().div(10),
-    -wind_components[6].resample(windSampleRate).mean().div(10),
-    color='b', width=0.005, scale=1
-)
-
-# Legend & Layout
-plt.legend(handles=handles, loc='upper left')
-plt.tight_layout()
 st.pyplot(fig)
 
 
