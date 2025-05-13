@@ -60,10 +60,8 @@ if len(dfs) > 0:
     plt.figure(figsize=(10, 6))
     for idx, df in enumerate(dfs):
         if 'AOD_500nm' in df.columns:
-            # Plot data points as dots using scatter
-            plt.scatter(df.loc[StartDateTime.strftime('%Y-%m-%d %H:%M:%S'):EndDateTime.strftime('%Y-%m-%d %H:%M:%S'), "AOD_500nm"].index,
-                        df.loc[StartDateTime.strftime('%Y-%m-%d %H:%M:%S'):EndDateTime.strftime('%Y-%m-%d %H:%M:%S'), "AOD_500nm"],
-                        color=colors[idx], label=labels[idx], s=10)  # s is the size of the dot
+            plt.plot(df.loc[StartDateTime.strftime('%Y-%m-%d %H:%M:%S'):EndDateTime.strftime('%Y-%m-%d %H:%M:%S'), "AOD_500nm"].resample(SampleRate).mean(), 
+                     color=colors[idx], label=labels[idx])
 
     # Format the plot
     plt.gcf().autofmt_xdate()
