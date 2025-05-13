@@ -1,92 +1,97 @@
-import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import requests
-from io import StringIO
-import datetime
+import streamlit as st
 
-# URLs for AOD data
-AOD_URLS = {
-    "Turlock": "https://raw.githubusercontent.com/Rsaltos7/TurlockAOD/main/20240101_20241231_Turlock.lev15",
-    "Sacramento": "https://raw.githubusercontent.com/Rsaltos7/SacromentoAOD/refs/heads/main/20240101_20241231_Sacramento_River.lev15",
-    "Modesto": "https://raw.githubusercontent.com/Rsaltos7/ModestoAOD/refs/heads/main/20240101_20241231_Modesto.lev15",
-    "Fresno": "https://raw.githubusercontent.com/Rsaltos7/FresnoAOD/refs/heads/main/20240101_20241231_Fresno_2.lev15"
-}
-
-# Turlock wind and temperature data (same as before)
-TURLOCK_METEOROLOGY_URL = "https://raw.githubusercontent.com/Rsaltos7/TurlockAOD/main/wind_temperature.csv"
-
+# Function to load AOD data
+@st.cache_data
 def load_aod_data(url):
-    try:
-        response = requests.get(url)
-        df = pd.read_csv(StringIO(response.text), comment='#', header=None, delim_whitespace=True)
-        df.columns = ['Date', 'Time', 'AOD']
-        df['Datetime'] = pd.to_datetime(df['Date'].astype(str) + df['Time'].astype(str).str.zfill(4), format='%Y%m%d%H%M')
-        df = df[['Datetime', 'AOD']]
-        df = df.replace(999.999, np.nan).dropna()
-        return df
-    except Exception as e:
-        st.error(f"Error loading AOD data: {e}")
-        return pd.DataFrame(columns=['Datetime', 'AOD'])
+    df = pd.read_csv(url, skiprows=6)
+    df['Date'] = pd.to_datetime(df['Date(dd:mm:yyyy)'] + ' ' + df['Time(hh:mm:ss)'])
+    df = df[['Date', 'AOD_500nm']]
+    df = df.dropna()
+    df = df[df['AOD_500nm'] < 2.0]  # Filter out extreme outliers
+    return df
 
-def load_turlock_meteorology(url):
-    try:
-        df = pd.read_csv(url)
-        df['datetime'] = pd.to_datetime(df['datetime'])
-        df[['U', 'V', 'TMP']] = df[['U', 'V', 'TMP']].replace('+9999', np.nan).astype(float)
-        df['TMP'] = df['TMP'] - 273.15  # Convert from Kelvin to Celsius
-        return df
-    except Exception as e:
-        st.error(f"Error loading Turlock meteorology data: {e}")
-        return pd.DataFrame(columns=['datetime', 'U', 'V', 'TMP'])
+# Function to load Turlock meteorological data
+@st.cache_data
+def load_turlock_meteo(url):
+    df = pd.read_csv(url)
+    df['datetime'] = pd.to_datetime(df['valid'])
+    df[['TMP', 'UGRD', 'VGRD']] = df[['TMP', 'UGRD', 'VGRD']].replace('+9999', np.nan)
+    df[['TMP', 'UGRD', 'VGRD']] = df[['TMP', 'UGRD', 'VGRD']].astype(float)
+    df['TMP_C'] = df['TMP'] - 273.15  # Convert from Kelvin to Celsius
+    return df
 
-# Load all data
-aod_data = {city: load_aod_data(url) for city, url in AOD_URLS.items()}
-turlock_met = load_turlock_meteorology(TURLOCK_METEOROLOGY_URL)
+# URLs for AOD Data
+turlock_url = "https://raw.githubusercontent.com/Rsaltos7/TurlockAOD/main/20240101_20241231_Turlock.lev15"
+sacramento_url = "https://raw.githubusercontent.com/Rsaltos7/SacromentoAOD/refs/heads/main/20240101_20241231_Sacramento_River.lev15"
+modesto_url = "https://raw.githubusercontent.com/Rsaltos7/ModestoAOD/refs/heads/main/20240101_20241231_Modesto.lev15"
+fresno_url = "https://raw.githubusercontent.com/Rsaltos7/FresnoAOD/refs/heads/main/20240101_20241231_Fresno_2.lev15"
 
-# Streamlit interface
-st.title("AOD + Turlock Meteorology Viewer")
+# URL for Turlock Wind and Temperature
+wind_url = "https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py?station=MCE&data=tmpf&data=sknt&data=drct&year1=2024&month1=1&day1=1&year2=2024&month2=12&day2=31&tz=Etc/UTC&format=comma&latlon=yes&missing=+9999&trace=0.0001&direct=no&report_type=3&report_type=4"
 
-# Date filter
-min_date = min(df['Datetime'].min() for df in aod_data.values())
-max_date = max(df['Datetime'].max() for df in aod_data.values())
-date_range = st.date_input("Select Date Range", [min_date, max_date], min_value=min_date, max_value=max_date)
+# Load data
+turlock_df = load_aod_data(turlock_url)
+sacramento_df = load_aod_data(sacramento_url)
+modesto_df = load_aod_data(modesto_url)
+fresno_df = load_aod_data(fresno_url)
+wind_df = load_turlock_meteo(wind_url)
 
-# Y-axis AOD value slider
-y_min, y_max = st.slider("AOD Y-axis range", 0.0, 1.5, (0.0, 1.0), 0.05)
+# Streamlit UI
+st.title("California AOD + Turlock Wind & Temperature")
+st.write("Visualizing AOD across four cities with Turlock's temperature and wind overlay.")
 
-# Filter data based on selected date range
-start_date, end_date = pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1])
-filtered_aod_data = {
-    city: df[(df['Datetime'] >= start_date) & (df['Datetime'] <= end_date)]
-    for city, df in aod_data.items()
-}
-filtered_met = turlock_met[(turlock_met['datetime'] >= start_date) & (turlock_met['datetime'] <= end_date)]
+# Date range selection
+min_date = max([
+    df['Date'].min() for df in [turlock_df, sacramento_df, modesto_df, fresno_df]
+])
+max_date = min([
+    df['Date'].max() for df in [turlock_df, sacramento_df, modesto_df, fresno_df]
+])
+start_date, end_date = st.date_input("Select Date Range", [min_date.date(), max_date.date()])
 
-# Plotting
-fig, ax1 = plt.subplots(figsize=(14, 6))
+# AOD range slider
+aod_min, aod_max = st.slider("Adjust AOD Y-axis Range", 0.0, 2.0, (0.0, 0.5), 0.01)
+
+# Filter by date
+def filter_date(df):
+    return df[(df['Date'] >= pd.Timestamp(start_date)) & (df['Date'] <= pd.Timestamp(end_date))]
+
+turlock_df = filter_date(turlock_df)
+sacramento_df = filter_date(sacramento_df)
+modesto_df = filter_date(modesto_df)
+fresno_df = filter_date(fresno_df)
+wind_df = wind_df[(wind_df['datetime'] >= pd.Timestamp(start_date)) & (wind_df['datetime'] <= pd.Timestamp(end_date))]
+
+# Plot
+fig, ax1 = plt.subplots(figsize=(12, 6))
 
 # Plot AOD data
-for city, df in filtered_aod_data.items():
-    ax1.plot(df['Datetime'], df['AOD'], label=f'{city} AOD')
+ax1.plot(turlock_df['Date'], turlock_df['AOD_500nm'], label='Turlock AOD', color='blue')
+ax1.plot(sacramento_df['Date'], sacramento_df['AOD_500nm'], label='Sacramento AOD', color='green')
+ax1.plot(modesto_df['Date'], modesto_df['AOD_500nm'], label='Modesto AOD', color='orange')
+ax1.plot(fresno_df['Date'], fresno_df['AOD_500nm'], label='Fresno AOD', color='red')
+ax1.set_ylabel("AOD at 500nm")
+ax1.set_ylim(aod_min, aod_max)
+ax1.legend(loc="upper left")
 
-ax1.set_ylabel('AOD')
-ax1.set_ylim(y_min, y_max)
-ax1.set_xlabel('Date')
-ax1.legend(loc='upper left')
-ax1.grid(True)
+# Twin axis for temperature
+ax2 = ax1.twinx()
+ax2.plot(wind_df['datetime'], wind_df['TMP_C'], label='Temperature (°C)', color='black', linestyle='dotted')
+ax2.set_ylabel("Temperature (°C)", color='black')
 
-# Add temperature on secondary y-axis
-if not filtered_met.empty:
-    ax2 = ax1.twinx()
-    ax2.plot(filtered_met['datetime'], filtered_met['TMP'], color='red', label='Turlock Temp (°C)', alpha=0.5)
-    ax2.set_ylabel('Temperature (°C)', color='red')
-    ax2.tick_params(axis='y', labelcolor='red')
+# Wind vectors as quivers
+step = len(wind_df) // 20 or 1
+times = wind_df['datetime'].iloc[::step]
+u = wind_df['UGRD'].iloc[::step]
+v = wind_df['VGRD'].iloc[::step]
+temps = wind_df['TMP_C'].iloc[::step]
+aod_vals = np.interp(times.astype(np.int64), turlock_df['Date'].astype(np.int64), turlock_df['AOD_500nm'])
 
-    # Wind vectors (as quiver plot approximation using lines)
-    for i in range(0, len(filtered_met), max(len(filtered_met)//100, 1)):  # limit number of arrows for readability
-        dt = filtered_met.iloc[i]
-        ax1.arrow(dt['datetime'], y_min, dt['U'], dt['V'], head_width=0.02, head_length=0.01, fc='blue', ec='blue', alpha=0.5)
+# Normalize wind vector lengths for plotting
+quiver_scale = 50
+ax1.quiver(times, aod_vals, u, v, scale=quiver_scale, width=0.0025, color='purple', label='Wind Vectors')
 
 st.pyplot(fig)
